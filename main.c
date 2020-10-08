@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <err.h>
@@ -415,6 +416,7 @@ on_message_complete(http_parser *parser)
 {
 	struct req *req = parser->data;
 	FILE *mf;
+	size_t len;
 	off_t off;
 	int r;
 
@@ -423,18 +425,9 @@ on_message_complete(http_parser *parser)
 		return (0);
 	}
 
-	if (stats_buf == NULL) {
-		stats_buf_sz = 128*1024;
-		stats_buf = malloc(stats_buf_sz);
-	}
-	if (stats_buf == NULL) {
-		tslog("failed to allocate metrics buffer");
-		send_err(parser, 500);
-		return (0);
-	}
-	mf = fmemopen(stats_buf, stats_buf_sz, "w");
+	mf = tmpfile();
 	if (mf == NULL) {
-		tslog("fmemopen failed: %s", strerror(errno));
+		tslog("tmpfile failed: %s", strerror(errno));
 		send_err(parser, 500);
 		return (0);
 	}
@@ -442,6 +435,7 @@ on_message_complete(http_parser *parser)
 	tslog("generating metrics...");
 	r = registry_collect(req->registry);
 	if (r != 0) {
+		fclose(mf);
 		tslog("metric collection failed: %s", strerror(r));
 		send_err(parser, 500);
 		return (0);
@@ -450,11 +444,11 @@ on_message_complete(http_parser *parser)
 	fflush(mf);
 	off = ftell(mf);
 	if (off < 0) {
+		fclose(mf);
 		send_err(parser, 500);
 		return (0);
 	}
-	fclose(mf);
-	tslog("done, sending %lld bytes", off);
+	tslog("done, sending %" PRId64 " bytes", off);
 
 	fprintf(req->wf, "HTTP/%d.%d %d %s\r\n", parser->http_major,
 	    parser->http_minor, 200, http_status_str(200));
@@ -466,8 +460,11 @@ on_message_complete(http_parser *parser)
 	fprintf(req->wf, "\r\n");
 	fflush(req->wf);
 
-	fprintf(req->wf, "%s", stats_buf);
-	fflush(req->wf);
+	len = off;
+	off = 0;
+	(void) sendfile(fileno(req->wf), fileno(mf), &off, len);
+
+	fclose(mf);
 
 	req->done = 1;
 
