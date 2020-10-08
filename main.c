@@ -34,6 +34,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -106,11 +107,9 @@ extern FILE *logfile;
 int
 main(int argc, char *argv[])
 {
-	const char *optstring = "p:fl:P";
+	const char *optstring = "p:fl:";
 	uint16_t port = 27600;
 	int daemon = 1;
-	/* XXX: default on after new pledges are in base */
-	int do_pledge = 0;
 
 	int lsock, sock;
 	struct sockaddr_in laddr, raddr;
@@ -135,9 +134,6 @@ main(int argc, char *argv[])
 
 	while ((c = getopt(argc, argv, optstring)) != -1) {
 		switch (c) {
-		case 'P':
-			do_pledge = 1;
-			break;
 		case 'p':
 			errno = 0;
 			parsed = strtoul(optarg, &p, 0);
@@ -224,13 +220,6 @@ main(int argc, char *argv[])
 	++upfds;
 
 	tslog("listening on port %d", port);
-
-	if (do_pledge) {
-		if (pledge("stdio inet route vminfo pf", NULL) != 0) {
-			tslog("pledge() failed: %s", strerror(errno));
-			err(EXIT_ERROR, "pledge()");
-		}
-	}
 
 	while (1) {
 		struct timespec now;
@@ -472,7 +461,7 @@ on_message_complete(http_parser *parser)
 	fprintf(req->wf, "Server: obsd-prom-exporter\r\n");
 	fprintf(req->wf, "Content-Type: "
 	    "text/plain; version=0.0.4; charset=utf-8\r\n");
-	fprintf(req->wf, "Content-Length: %lld\r\n", off);
+	fprintf(req->wf, "Content-Length: %" PRId64 "\r\n", off);
 	fprintf(req->wf, "Connection: close\r\n");
 	fprintf(req->wf, "\r\n");
 	fflush(req->wf);
